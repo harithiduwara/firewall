@@ -84,7 +84,7 @@ and is uploaded as a CI artifact.
 | Environment | Static | Apply | Live packets | Traceability |
 |-------------|--------|-------|--------------|--------------|
 | Development sandbox (kernel without IPv6) | 31/31 | 26/26 | 64/64 passed, 33 IPv6 checks skipped | 28/28 verified |
-| CI, Ubuntu 24.04 (IPv6 required) | see the CI run for the release commit | | | |
+| CI, Ubuntu 24.04 (IPv6 required), [run 1](https://github.com/harithiduwara/firewall/actions/runs/40403023789) | 31/31 | 26/26 | 97/97 passed, 0 skipped | 28/28 verified |
 
 ## 5.6 Not covered by automated tests
 
