@@ -1,0 +1,29 @@
+#!/usr/sbin/nft -f
+# =============================================================================
+# Home Firewall — LOCKDOWN ruleset (SR-13).
+#
+# Loaded when the main ruleset fails to load or the firewall service is
+# stopped. Drops everything except loopback, replies to the router's own
+# traffic, IPv6 neighbor discovery and SSH from the LAN, so the administrator
+# can log in and fix the problem. Packet forwarding is switched off as well.
+# =============================================================================
+
+flush ruleset
+
+include "home-firewall/zones.nft"
+
+table inet lockdown {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        ct state established,related accept
+        iif lo accept
+        icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } ip6 hoplimit 255 accept
+        iifname $LAN_IF tcp dport $SSH_PORT ct state new limit rate 6/minute burst 6 packets accept
+    }
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+    }
+    chain output {
+        type filter hook output priority filter; policy accept;
+    }
+}

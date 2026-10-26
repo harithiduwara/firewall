@@ -1,0 +1,12 @@
+# Home Firewall — emergency lockdown (SR-13).
+# Started automatically when nftables.service fails.
+[Unit]
+Description=Home Firewall emergency lockdown
+DefaultDependencies=no
+Before=network-pre.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/sysctl -q -w net.ipv4.ip_forward=0 net.ipv6.conf.all.forwarding=0
+ExecStart=/usr/sbin/nft -f /etc/home-firewall/lockdown.nft

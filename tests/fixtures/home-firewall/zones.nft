@@ -1,0 +1,6 @@
+# Interface names used by the namespace test lab (tests/lab.sh).
+define WAN_IF   = "wan0"
+define LAN_IF   = "lan0"
+define GUEST_IF = "guest0"
+define IOT_IF   = "iot0"
+define SSH_PORT = 22

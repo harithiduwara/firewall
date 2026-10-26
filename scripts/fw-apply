@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# =============================================================================
+# fw-apply — validate, apply and (unless confirmed) roll back a firewall
+# ruleset.  Requirements: SR-13 (never load an invalid ruleset) and SR-14
+# (automatic rollback).
+#
+# Usage: fw-apply [--check] [--yes] [--timeout SECONDS] [RULESET]
+#
+#   RULESET        Ruleset file (default: /etc/nftables.conf)
+#   --check        Only validate; change nothing.
+#   --yes          Apply without the confirmation window (boot/automation).
+#   --timeout N    Seconds to wait for confirmation (default 60).
+#
+# Environment (for testing / non-standard layouts):
+#   FW_INCLUDE_DIR  Directory searched for "include" files (default: /etc)
+#   FW_STATE_DIR    Where backups are kept (default: /var/lib/home-firewall)
+# =============================================================================
+set -Eeuo pipefail
+umask 077                                   # SR-16: backups readable by root only
+
+readonly NFT=/usr/sbin/nft
+RULESET=/etc/nftables.conf
+INCLUDE_DIR=${FW_INCLUDE_DIR:-/etc}
+STATE_DIR=${FW_STATE_DIR:-/var/lib/home-firewall}
+TIMEOUT=60
+CHECK_ONLY=0
+ASSUME_YES=0
+KEEP_BACKUPS=10
+
+log() { printf 'fw-apply: %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+usage() {
+    sed -n '/^# Usage:/,/^# =====/p' "$0" | sed -e 's/^# \{0,1\}//' -e '/^=====/d' >&2
+    exit 2
+}
+
+while (($#)); do
+    case $1 in
+        --check)   CHECK_ONLY=1 ;;
+        --yes)     ASSUME_YES=1 ;;
+        --timeout)
+            (($# >= 2)) || usage
+            if ! [[ $2 =~ ^[0-9]+$ ]] || (($2 < 5 || $2 > 3600)); then
+                die "--timeout must be a whole number between 5 and 3600"
+            fi
+            TIMEOUT=$2
+            shift ;;
+        -h|--help) usage ;;
+        --)        shift; break ;;
+        -*)        usage ;;
+        *)         break ;;
+    esac
+    shift
+done
+(($# <= 1)) || usage
+(($# == 1)) && RULESET=$1
+
+[[ ${EUID} -eq 0 ]] || die "must be run as root"
+[[ -x ${NFT} ]]     || die "${NFT} not found — install the 'nftables' package"
+[[ -f ${RULESET} && -r ${RULESET} ]] || die "cannot read ruleset '${RULESET}'"
+[[ -d ${INCLUDE_DIR} ]] || die "include directory '${INCLUDE_DIR}' does not exist"
+
+nft_load() { "${NFT}" -I "${INCLUDE_DIR}" -f "$1"; }
+
+# --- Step 1: validate (SR-13) -------------------------------------------------
+log "validating ${RULESET}"
+if ! "${NFT}" -I "${INCLUDE_DIR}" -c -f "${RULESET}"; then
+    die "validation failed — nothing was changed"
+fi
+if ((CHECK_ONLY)); then
+    log "OK: ruleset is valid (nothing applied)"
+    exit 0
+fi
+
+# --- Step 2: back up the running ruleset --------------------------------------
+mkdir -p -- "${STATE_DIR}"
+chmod 0700 -- "${STATE_DIR}"
+BACKUP=$(mktemp -- "${STATE_DIR}/backup-$(date +%Y%m%d-%H%M%S)-XXXXXX.nft")
+{
+    echo "flush ruleset"
+    "${NFT}" list ruleset
+} > "${BACKUP}" || die "could not save the current ruleset — nothing was changed"
+log "current ruleset saved to ${BACKUP}"
+
+# Keep only the newest backups.
+# Names embed a sortable timestamp, so a reverse name sort is newest-first.
+mapfile -t old_backups < <(find "${STATE_DIR}" -maxdepth 1 -type f -name 'backup-*.nft' -printf '%f\n' \
+                           | sort -r | tail -n +$((KEEP_BACKUPS + 1)))
+for b in "${old_backups[@]}"; do rm -f -- "${STATE_DIR}/${b}"; done
+
+APPLIED=0
+CONFIRMED=0
+# shellcheck disable=SC2317  # called from the EXIT trap
+rollback() {
+    log "ROLLING BACK to ${BACKUP}"
+    if "${NFT}" -f "${BACKUP}"; then
+        log "rollback complete — previous ruleset restored"
+    else
+        log "CRITICAL: rollback failed. Load a known-good ruleset by hand: nft -f ${BACKUP}"
+    fi
+}
+# shellcheck disable=SC2317  # called from the EXIT trap
+on_exit() {
+    local rc=$?
+    if ((APPLIED && !CONFIRMED)); then
+        rollback
+        ((rc != 0)) || rc=1
+    fi
+    exit "${rc}"
+}
+trap on_exit EXIT
+trap 'log "interrupted"; exit 130' INT TERM HUP
+
+# --- Step 3: apply ------------------------------------------------------------
+log "applying ${RULESET}"
+# Set before loading so that a signal arriving right after the load still
+# triggers a rollback. If the load itself fails, nft has changed nothing and
+# the rollback simply re-loads the same ruleset.
+APPLIED=1
+nft_load "${RULESET}" || die "apply failed — the previous ruleset is still active"
+
+if ((ASSUME_YES)); then
+    CONFIRMED=1
+    log "applied (confirmation skipped with --yes)"
+    exit 0
+fi
+
+# --- Step 4: confirm or roll back (SR-14) -------------------------------------
+log "new ruleset is active. Check that you can still reach the router and the internet."
+printf 'Type "yes" within %s seconds to keep it, anything else rolls back: ' "${TIMEOUT}" >&2
+answer=""
+if read -r -t "${TIMEOUT}" answer && [[ ${answer} == "yes" ]]; then
+    CONFIRMED=1
+    log "confirmed — new ruleset kept"
+    exit 0
+fi
+echo >&2
+log "not confirmed"
+exit 1

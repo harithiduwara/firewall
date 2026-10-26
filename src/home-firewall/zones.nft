@@ -1,0 +1,20 @@
+# =============================================================================
+# Home Firewall — site settings. THIS IS THE ONLY FILE YOU NEED TO EDIT.
+#
+# Find your interface names with:   ip -br link
+# After editing, apply safely with: sudo fw-apply
+#
+# Rules:
+#   * Each name must be different. Interface names are at most 15 characters.
+#   * No guest or IoT network? Leave the placeholder names ("guest-unused",
+#     "iot-unused"). Rules for interfaces that do not exist never match.
+#   * PPPoE internet? WAN_IF is the PPP interface (usually "ppp0"), not the
+#     Ethernet port.
+# =============================================================================
+
+define WAN_IF   = "eth0"          # to the ISP modem / ONT
+define LAN_IF   = "eth1"          # trusted home network
+define GUEST_IF = "guest-unused"  # e.g. "eth1.20" (VLAN 20) for guest Wi-Fi
+define IOT_IF   = "iot-unused"    # e.g. "eth1.30" (VLAN 30) for smart devices
+
+define SSH_PORT = 22              # SSH is only ever reachable from LAN_IF
